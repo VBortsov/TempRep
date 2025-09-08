@@ -1,230 +1,225 @@
-"use client";
+'use client';
 
-import React, {useEffect, useMemo, useRef, useState} from "react";
-import {motion} from "framer-motion";
+import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Lock, Unlock, Pencil, X, Plus, FileText } from 'lucide-react';
 
-/**
- * DraggableDocumentDock
- *
- * A draggable, transparent overlay that lists PDF files in a vertical column.
- * Stays above your background map (z-index), supports configurable initial position,
- * and opens PDFs in a new browser tab when clicked.
- *
- * Usage example (see Demo at bottom):
- * <DraggableDocumentDock
- *   title="Classified Documents"
- *   files={[
- *     { name: "doc1.pdf", url: "/pdfs/doc1.pdf" },
- *     { name: "doc2.pdf", url: "/pdfs/doc2.pdf" },
- *   ]}
- *   initial={{ x: 40, y: 60 }}
- *   width={320}
- *   height={380}
- *   rememberPosition
- * />
- *
- * Props:
- * - title?: string — panel title. Default: "Classified Documents"
- * - files: Array<{ name: string; url: string }>
- * - initial?: { x: number; y: number } — starting position in pixels
- * - width?: number — panel width (px). Default 300
- * - height?: number — panel height (px). Default 360
- * - rememberPosition?: boolean — persist last position in localStorage
- * - constrainToViewport?: boolean — keep the dock within window bounds on drag
- */
-export function DraggableDocumentDock({
-                                          title = "Classified Documents",
-                                          files = [],
-                                          initial = {x: 24, y: 24},
-                                          width = 300,
-                                          height = 360,
-                                          rememberPosition = true,
-                                          constrainToViewport = true,
-                                      }: {
-    title?: string;
-    files: { name: string; url: string }[];
-    initial?: { x: number; y: number };
-    width?: number;
-    height?: number;
-    rememberPosition?: boolean;
-    constrainToViewport?: boolean;
-}) {
-    const storageKey = `doc-dock-pos:${title}`;
-    const [pos, setPos] = useState<{ x: number, y: number }>(() => {
-        if (rememberPosition) {
-            try {
-                const raw = localStorage.getItem(storageKey);
-                if (raw) return JSON.parse(raw);
-            } catch {
-            }
-        }
-        return initial;
-    });
+type WaypointDoc = {
+    id: string;
+    name: string;
+    dataUrl: string;
+    thumb?: string;
+};
 
-    useEffect(() => {
-        if (!rememberPosition) return;
+async function renderPdfFirstPageToDataUrl(fileDataUrl: string, width = 220): Promise<string | null> {
+    try {
+        const pdfjs: never = await import(/* webpackIgnore: true */ 'pdfjs-dist/build/pdf');
         try {
-            localStorage.setItem(storageKey, JSON.stringify(pos));
-        } catch {
-        }
-    }, [pos, rememberPosition, storageKey]);
+            pdfjs.GlobalWorkerOptions.workerSrc =
+                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        } catch {}
+        const res = await fetch(fileDataUrl);
+        const buf = await res.arrayBuffer();
+        const loadingTask = pdfjs.getDocument({ data: buf });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
 
-    // Keep within viewport on mount/resize if desired
-    useEffect(() => {
-        if (!constrainToViewport) return;
-        const clamp = () => {
-            const maxX = Math.max(0, window.innerWidth - width);
-            const maxY = Math.max(0, window.innerHeight - height);
-            setPos(p => ({x: Math.min(Math.max(0, p.x), maxX), y: Math.min(Math.max(0, p.y), maxY)}));
-        };
-        clamp();
-        window.addEventListener("resize", clamp);
-        return () => window.removeEventListener("resize", clamp);
-    }, [constrainToViewport, width, height]);
+        const viewport = page.getViewport({ scale: 1 });
+        const scale = width / viewport.width;
+        const scaled = page.getViewport({ scale });
 
-    // Drag constraints: optional containment in viewport using a virtual rect
-    const constraintsRef = useRef<HTMLDivElement | null>(null);
-    const constraintBox = useMemo(() => ({
-        left: 0,
-        top: 0,
-        right: typeof window !== "undefined" ? window.innerWidth - width : 0,
-        bottom: typeof window !== "undefined" ? window.innerHeight - height : 0,
-    }), [width, height]);
-
-    return (
-        <>
-            {/* Invisible container only for framer-motion constraints when desired */}
-            {constrainToViewport && (
-                <div ref={constraintsRef} className="fixed inset-0 pointer-events-none"/>
-            )}
-
-            <motion.div
-                className="fixed z-[60] select-none"
-                drag
-                dragMomentum={false}
-                dragElastic={0}
-                dragConstraints={constrainToViewport ? constraintBox : undefined}
-                onDragEnd={(_, info) => {
-                    const {x, y} = info.point;
-                    // info.point is absolute page coordinates; translate to top-left for our element
-                    setPos({x, y});
-                }}
-                initial={{x: pos.x, y: pos.y, opacity: 0, scale: 0.98}}
-                animate={{x: pos.x, y: pos.y, opacity: 1, scale: 1}}
-                transition={{type: "spring", stiffness: 500, damping: 40, mass: 0.8}}
-                style={{width, height}}
-            >
-                {/* Transparent layer; add ring to keep text readable on busy maps */}
-                <div className="w-full h-full bg-transparent text-white/90">
-                    <div className="flex items-center gap-2 px-3 py-2 cursor-grab active:cursor-grabbing">
-                        <div className="h-2.5 w-2.5 rounded-full bg-white/70"/>
-                        <h2 className="text-sm font-semibold tracking-wide uppercase drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">
-                            {title}
-                        </h2>
-                    </div>
-
-                    <div className="px-2 pb-2">
-                        <div
-                            className="rounded-2xl ring-1 ring-white/25 backdrop-blur-sm bg-white/0 overflow-hidden"
-                            style={{height: height - 54}}
-                        >
-                            <ul className="overflow-auto max-h-full divide-y divide-white/10">
-                                {files.length === 0 && (
-                                    <li className="p-3 text-xs text-white/70">No documents yet.</li>
-                                )}
-                                {files.map((f, idx) => (
-                                    <li key={idx} className="group">
-                                        <a
-                                            href={f.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-3 px-3 py-2 hover:bg-white/5 active:bg-white/10 transition"
-                                            title={f.name}
-                                        >
-                      <span className="flex items-center gap-2">
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            className="w-4 h-4 opacity-80 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]"
-                            aria-hidden
-                        >
-                          <path
-                              d="M17 8h-1V7a4 4 0 1 0-8 0h2a2 2 0 1 1 4 0v1H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm0 11H7v-9h10v9Zm-5-3a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/>
-                        </svg>
-                        <span className="text-sm truncate drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]">{f.name}</span>
-                      </span>
-                                        </a>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </motion.div>
-        </>
-    );
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        canvas.width = Math.ceil(scaled.width);
+        canvas.height = Math.ceil(scaled.height);
+        await page.render({ canvasContext: ctx, viewport: scaled }).promise;
+        return canvas.toDataURL('image/png', 0.9);
+    } catch {
+        return null;
+    }
 }
 
-/**
- * Optional helper to auto-load PDFs from a directory when using Vite/Next (client-safe).
- * Place PDFs in /public/pdfs and pass the result to DraggableDocumentDock.
- */
-export function usePublicPdfList(publicDir = "/pdfs") {
-    type FileItem = {
-        name: string;
-        url: string;
+type DockProps = {
+    activeId: string | null;
+    activeLabel?: string;
+    onClose?: () => void;
+    left?: number;
+    top?: number;
+};
+
+export default function DraggableDocumentDock({
+                                                  activeId,
+                                                  activeLabel = 'Documents',
+                                                  onClose,
+                                                  left,
+                                                  top,
+                                              }: DockProps) {
+    const [docs, setDocs] = useState<WaypointDoc[]>([]);
+    const [locked, setLocked] = useState<boolean>(false);
+    const [editing, setEditing] = useState(false);
+
+    // Load from the same keys DraggableWaypoint uses
+    useEffect(() => {
+        if (!activeId) return;
+        try {
+            setDocs(JSON.parse(localStorage.getItem(`${activeId}:docs`) || '[]'));
+        } catch {
+            setDocs([]);
+        }
+        setLocked(localStorage.getItem(`${activeId}:locked`) === '1');
+    }, [activeId]);
+
+    useEffect(() => {
+        if (!activeId) return;
+        localStorage.setItem(`${activeId}:docs`, JSON.stringify(docs));
+    }, [docs, activeId]);
+
+    useEffect(() => {
+        if (!activeId) return;
+        localStorage.setItem(`${activeId}:locked`, locked ? '1' : '0');
+    }, [locked, activeId]);
+
+    const inputRef = useRef<HTMLInputElement | null>(null);
+    const onAddClick = () => inputRef.current?.click();
+
+    const handleFiles = async (files: FileList | null) => {
+        if (!files || !files.length) return;
+        const additions: WaypointDoc[] = [];
+        for (const file of Array.from(files)) {
+            if (file.type !== 'application/pdf') continue;
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onload = () => resolve(fr.result as string);
+                fr.onerror = reject;
+                fr.readAsDataURL(file);
+            });
+            additions.push({
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                name: file.name,
+                dataUrl,
+            });
+        }
+        setDocs(prev => [...prev, ...additions]);
+        // render thumbs
+        for (const d of additions) {
+            const thumb = await renderPdfFirstPageToDataUrl(d.dataUrl);
+            setDocs(prev => prev.map(p => (p.id === d.id ? { ...p, thumb: thumb || p.thumb } : p)));
+        }
     };
 
-    const [files, setFiles] = useState<FileItem[]>([]);
+    const removeDoc = (docId: string) => setDocs(prev => prev.filter(d => d.id !== docId));
 
-    useEffect(() => {
-        // Without a server index, browsers can't list directories. If you can expose
-        // an index.json in the folder, fetch it here. Otherwise, keep using props.
-        // This is a placeholder demonstrating the expected shape.
-        // setFiles([{ name: "doc1.pdf", url: `${publicDir}/doc1.pdf` }]);
-    }, [publicDir]);
-    return files;
-}
+    const visible = !!activeId;
 
-interface DraggableDocumentDockProps {
-    title?: string,
-    files?: ({ name: string; url: string } | { name: string; url: string })[],
-    initial?: { x: number; y: number },
-    width?: number,
-    height?: number,
-    rememberPosition?: boolean,
-    constrainToViewport?: boolean
-}
-
-/**
- * Demo page to preview in the Canvas. It shows a background map image and the dock over it.
- */
-// components/DraggableDocumentDock.tsx
-export default function DemoMapWithDock({
-                                            title,
-                                            files = [],               // <— accept files from parent
-                                            initial,
-                                            width,
-                                            height,
-                                            rememberPosition,
-                                            constrainToViewport,
-                                        }: DraggableDocumentDockProps) {
     return (
-        <div className="w-screen h-screen overflow-hidden relative" style={{ /* bg styles... */ }}>
-            <div className="absolute inset-0 bg-black/10" />
-            <DraggableDocumentDock
-                title={title ?? "Classified Documents"}
-                files={files}         // <— use the prop
-                initial={initial ?? { x: 40, y: 60 }}
-                width={width ?? 320}
-                height={height ?? 380}
-                rememberPosition={rememberPosition ?? true}
-                constrainToViewport={constrainToViewport ?? true}
-            />
-            <div className="absolute bottom-3 left-3 text-white/80 text-xs drop-shadow">
-                Drag the header to move the panel. Click a file to open the PDF in a new tab.
-            </div>
-        </div>
+        <AnimatePresence>
+            {visible && (
+                <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                    style={{ position: 'absolute', left: left ?? 24, top: top ?? 24, maxWidth: 560 }}
+                    className="z-20 bg-white/85 backdrop-blur border border-neutral-200 shadow-xl rounded-2xl p-3"
+                >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-fuchsia-500" />
+                            <h3 className="text-sm font-semibold">{activeLabel} – Documents</h3>
+                            <span className="text-xs text-neutral-500">{docs.length}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setEditing(e => !e)}
+                                className="px-2 py-1 text-xs rounded-lg bg-neutral-900 text-white hover:opacity-90 inline-flex items-center gap-1"
+                            >
+                                <Pencil size={14} /> Edit
+                            </button>
+                            <button
+                                onClick={() => setLocked(l => !l)}
+                                className="px-2 py-1 text-xs rounded-lg bg-neutral-200 hover:bg-neutral-300 inline-flex items-center gap-1"
+                            >
+                                {locked ? <Unlock size={14} /> : <Lock size={14} />} {locked ? 'Unlock' : 'Lock'}
+                            </button>
+                            <button onClick={onClose} className="p-1 rounded-lg hover:bg-neutral-100">
+                                <X size={16} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <AnimatePresence initial={false}>
+                        {editing && (
+                            <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="mb-2"
+                            >
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        ref={inputRef}
+                                        type="file"
+                                        accept="application/pdf"
+                                        multiple
+                                        className="hidden"
+                                        onChange={e => handleFiles(e.target.files)}
+                                    />
+                                    <button
+                                        onClick={onAddClick}
+                                        className="px-2 py-1 text-xs rounded-lg bg-cyan-600 text-white hover:opacity-90 inline-flex items-center gap-1"
+                                    >
+                                        <Plus size={14} /> Add PDFs
+                                    </button>
+                                    <span className="text-xs text-neutral-500">(first page becomes the icon)</span>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    <div className="grid grid-cols-3 gap-3">
+                        {docs.length === 0 && (
+                            <div className="col-span-3 text-center text-sm text-neutral-500 p-6 border border-dashed rounded-xl">
+                                No documents yet. {editing ? 'Click Add PDFs to attach some.' : 'Enter Edit to add PDFs.'}
+                            </div>
+                        )}
+
+                        {docs.map(doc => (
+                            <div key={doc.id} className="relative group rounded-xl border bg-white overflow-hidden">
+                                <div className="aspect-[4/3] w-full bg-neutral-50 grid place-items-center overflow-hidden">
+                                    {doc.thumb ? (
+                                        <img src={doc.thumb} alt={`${doc.name} thumbnail`} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center text-neutral-400">
+                                            <FileText size={36} />
+                                            <span className="text-xs mt-1">PDF</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="px-2 py-2">
+                                    <p className="text-xs font-medium truncate" title={doc.name}>
+                                        {doc.name}
+                                    </p>
+                                </div>
+
+                                {editing && (
+                                    <button
+                                        onClick={() => removeDoc(doc.id)}
+                                        className="absolute top-1 right-1 bg-white/90 hover:bg-white text-neutral-800 rounded-full p-1 shadow"
+                                        title="Remove"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                )}
+
+                                {!editing && (
+                                    <a href={doc.dataUrl} target="_blank" rel="noreferrer" className="absolute inset-0" title="Open PDF" />
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }
